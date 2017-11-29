@@ -524,9 +524,14 @@ redo:
         } else if (es_type == STREAM_TYPE_AUDIO_AC3) {
             codec_id = AV_CODEC_ID_AC3;
             type     = AVMEDIA_TYPE_AUDIO;
-        } else if (m->imkh_cctv && es_type == 0x91) {
+        /* Modified for GB28181 by Tang, Hongxing */
+        } else if (es_type == STREAM_TYPE_AUDIO_PCM_MULAW) {
             codec_id = AV_CODEC_ID_PCM_MULAW;
             type     = AVMEDIA_TYPE_AUDIO;
+        } else if (es_type == STREAM_TYPE_AUDIO_PCM_ALAW) {
+            codec_id = AV_CODEC_ID_PCM_ALAW;
+            type     = AVMEDIA_TYPE_AUDIO;
+        /* Modified end by Tang, Hongxing */
     } else if (startcode >= 0x1e0 && startcode <= 0x1ef) {
         static const unsigned char avs_seqh[4] = { 0, 0, 1, 0xb0 };
         unsigned char buf[8];
@@ -591,7 +596,7 @@ skip:
     st->id                = startcode;
     st->codec->codec_type = type;
     st->codec->codec_id   = codec_id;
-    if (st->codec->codec_id == AV_CODEC_ID_PCM_MULAW) {
+    if (codec_id == AV_CODEC_ID_PCM_MULAW || codec_id == AV_CODEC_ID_PCM_ALAW) {// Modified for GB28181 by Tang, Hongxing
         st->codec->channels = 1;
         st->codec->channel_layout = AV_CH_LAYOUT_MONO;
         st->codec->sample_rate = 8000;

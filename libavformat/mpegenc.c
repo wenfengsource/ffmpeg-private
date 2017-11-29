@@ -41,6 +41,7 @@ typedef struct PacketDesc {
     int size;
     int unwritten_size;
     struct PacketDesc *next;
+    int key_frame; // Added for GB28181 by Tang, Hongxing
 } PacketDesc;
 
 typedef struct StreamInfo {
@@ -81,6 +82,8 @@ typedef struct MpegMuxContext {
     int64_t vcd_padding_bytes_written;
 
     int preload;
+    
+    int key_frame; // Added for GB28181 by Tang, Hongxing
 } MpegMuxContext;
 
 extern AVOutputFormat ff_mpeg1vcd_muxer;
@@ -385,9 +388,11 @@ static av_cold int mpeg_mux_init(AVFormatContext *ctx)
             s->audio_bound++;
             break;
         case AVMEDIA_TYPE_VIDEO:
+        		/* Modified for GB28181 by Tang, Hongxing
             if (st->codec->codec_id == AV_CODEC_ID_H264)
                 stream->id = h264_id++;
             else
+            Modified end by Tang, Hongxing */
                 stream->id = mpv_id++;
             if (st->codec->rc_buffer_size)
                 stream->max_buffer_size = 6 * 1024 + st->codec->rc_buffer_size / 8;
@@ -585,9 +590,96 @@ static int get_nb_frames(AVFormatContext *ctx, StreamInfo *stream, int len)
     return nb_frames;
 }
 
+/* Added for GB28181 by Tang, Hongxing */
+static uint8_t get_stream_type(int stream_codec_id)
+{
+    uint8_t res = 0;
+    switch(stream_codec_id)
+    {
+        case AV_CODEC_ID_PCM_ALAW:
+            res = STREAM_TYPE_AUDIO_PCM_ALAW;
+            break;
+        case AV_CODEC_ID_PCM_MULAW:
+            res = STREAM_TYPE_AUDIO_PCM_MULAW;
+            break;
+        case AV_CODEC_ID_MPEG2VIDEO:
+            res = STREAM_TYPE_VIDEO_MPEG2;
+            break;
+        case AV_CODEC_ID_MP3:
+            res = STREAM_TYPE_AUDIO_MPEG2;
+            break;
+        case AV_CODEC_ID_MPEG4:
+            res = STREAM_TYPE_VIDEO_MPEG4;
+            break;
+        case AV_CODEC_ID_AC3:
+            res = STREAM_TYPE_AUDIO_AC3;
+            break;
+        case AV_CODEC_ID_AAC:
+            res = STREAM_TYPE_AUDIO_AAC;
+            break;
+        case AV_CODEC_ID_H264:
+            res = STREAM_TYPE_VIDEO_H264;
+            break;
+        default:
+            break;
+    }
+    return res;
+}
+
+static int put_psm_header(AVFormatContext *ctx,uint8_t *buf)
+{
+    PutBitContext pb;
+    int streamnum = 0;
+    for (int i = 0 ; i < ctx->nb_streams; i++)
+    {
+        if (ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO
+            || ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO)
+        {
+            streamnum++;
+        }
+    }
+    int streminfolen = streamnum * 4;
+
+    init_put_bits(&pb, buf, (16 + streminfolen) * 8);
+
+    put_bits32(&pb, 0x000001bc);
+    put_bits(&pb, 16, 10 + streminfolen);         /*program stream map length*/
+    put_bits(&pb, 1, 1);          /*current next indicator */
+    put_bits(&pb, 2, 3);          /*reserved*/
+    put_bits(&pb, 5, 0);          /*program stream map version*/
+    put_bits(&pb, 7, 0x7F);       /*reserved */
+    put_bits(&pb, 1, 1);          /*marker bit */
+    put_bits(&pb, 16,0);          /*programe stream info length*/
+    put_bits(&pb, 16, streminfolen);         /*elementary stream map length  is*/
+    for (int i = 0 ; i < ctx->nb_streams; i++)
+    {
+        AVStream* st = ctx->streams[i];
+        if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO || st->codec->codec_type == AVMEDIA_TYPE_AUDIO)
+        {
+            put_bits(&pb, 8, get_stream_type(st->codec->codec_id));       /*stream_type*/
+            if (st->codec->codec_type == AVMEDIA_TYPE_AUDIO)
+            {
+                put_bits(&pb, 8, AUDIO_ID);       /*elementary_stream_id*/
+            }
+            if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO)
+            {
+                put_bits(&pb, 8, VIDEO_ID);       /*elementary_stream_id*/
+            }
+            put_bits(&pb, 16, 0);         /*elementary_stream_info_length is*/
+        }
+    }
+    uint32_t crc = 0;//crc32(0, buf, 13 + streminfolen);
+    /*audio*/
+    /*crc (2e b9 0f 3d)*/
+    put_bits32(&pb, crc);       /*crc */
+    flush_put_bits(&pb);
+    return put_bits_ptr(&pb) - pb.buf;
+}
+/* Added end by Tang, Hongxing */
+
 /* flush the packet on stream stream_index */
 static int flush_packet(AVFormatContext *ctx, int stream_index,
-                        int64_t pts, int64_t dts, int64_t scr, int trailer_size)
+                        int64_t pts, int64_t dts, int64_t scr, int trailer_size, int left_frame_size)
 {
     MpegMuxContext *s  = ctx->priv_data;
     StreamInfo *stream = ctx->streams[stream_index]->priv_data;
@@ -608,11 +700,11 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
 
     buf_ptr = buffer;
 
-    if ((s->packet_number % s->pack_header_freq) == 0 || s->last_scr != scr) {
-        /* output pack and systems header if needed */
+		/* Modified for GB28181 by Tang, Hongxing */
+    if (0 == s->packet_number || (VIDEO_ID <= id && 0 == trailer_size)) {
+        /* output pack header before each video frame */
         size        = put_pack_header(ctx, buf_ptr, scr);
         buf_ptr    += size;
-        s->last_scr = scr;
 
         if (s->is_vcd) {
             /* there is exactly one system header for each stream in a VCD MPEG,
@@ -621,6 +713,9 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
 
             if (stream->packet_number == 0) {
                 size     = put_system_header(ctx, buf_ptr, id);
+                buf_ptr += size;
+
+                size = put_psm_header(ctx, buf_ptr);
                 buf_ptr += size;
             }
         } else if (s->is_dvd) {
@@ -636,6 +731,8 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
 
                 if (stream->bytes_to_iframe == 0 || s->packet_number == 0) {
                     size     = put_system_header(ctx, buf_ptr, 0);
+                    buf_ptr += size;
+                    size = put_psm_header(ctx, buf_ptr);
                     buf_ptr += size;
                     size     = buf_ptr - buffer;
                     avio_write(ctx->pb, buffer, size);
@@ -660,7 +757,6 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
                     scr        += s->packet_size * 90000LL /
                                   (s->mux_rate * 50LL);
                     size        = put_pack_header(ctx, buf_ptr, scr);
-                    s->last_scr = scr;
                     buf_ptr    += size;
                     /* GOP Start */
                 } else if (stream->bytes_to_iframe < PES_bytes_to_fill) {
@@ -669,12 +765,19 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
                 }
             }
         } else {
-            if ((s->packet_number % s->system_header_freq) == 0) {
+            /* output systems header and PSM before key frame */
+            if (0 == s->packet_number || s->key_frame) {
                 size     = put_system_header(ctx, buf_ptr, 0);
+                buf_ptr += size;
+        
+                size = put_psm_header(ctx, buf_ptr);
                 buf_ptr += size;
             }
         }
     }
+    s->last_scr = scr;
+  	/* Modified end by Tang, Hongxing */
+
     size = buf_ptr - buffer;
     avio_write(ctx->pb, buffer, size);
 
@@ -736,11 +839,11 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
         } else {
             startcode = 0x100 + id;
         }
-
-        stuffing_size = payload_size - av_fifo_size(stream->fifo);
+        
+        stuffing_size = payload_size - left_frame_size;  // Modified by Tang, Hongxing
 
         // first byte does not fit -> reset pts/dts + stuffing
-        if (payload_size <= trailer_size && pts != AV_NOPTS_VALUE) {
+        if (payload_size < trailer_size && pts != AV_NOPTS_VALUE) {
             int timestamp_len = 0;
             if (dts != pts)
                 timestamp_len += 5;
@@ -774,8 +877,19 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
         if (stuffing_size < 0)
             stuffing_size = 0;
 
+        /* Added for GB28181 one frame one PS package by Tang, Hongxing */
+        if ((payload_size - stuffing_size) >= left_frame_size) {
+        	int minus_packet_size = payload_size - left_frame_size - pad_packet_bytes;
+        	if (packet_size > minus_packet_size) {
+            packet_size -= payload_size - left_frame_size - pad_packet_bytes;
+            payload_size = left_frame_size;
+            pad_packet_bytes = stuffing_size = 0;
+          }
+        }
+        /* Added end by Tang, Hongxing */
+
         if (startcode == PRIVATE_STREAM_1 && id >= 0xa0) {
-            if (payload_size < av_fifo_size(stream->fifo))
+            if (payload_size < left_frame_size ) // Modified by Tang, Hongxing
                 stuffing_size += payload_size % stream->lpcm_align;
         }
 
@@ -876,7 +990,7 @@ static int flush_packet(AVFormatContext *ctx, int stream_index,
                              (void (*)(void*, void*, int))avio_write);
         stream->bytes_to_iframe -= payload_size - stuffing_size;
     } else {
-        payload_size  =
+        payload_size  = 
         stuffing_size = 0;
     }
 
@@ -933,17 +1047,19 @@ static int remove_decoded_packets(AVFormatContext *ctx, int64_t scr)
         StreamInfo *stream = st->priv_data;
         PacketDesc *pkt_desc;
 
-        while ((pkt_desc = stream->predecode_packet) &&
-               scr > pkt_desc->dts) { // FIXME: > vs >=
-            if (stream->buffer_index < pkt_desc->size ||
+        while ((pkt_desc = stream->predecode_packet) /* &&
+               scr > pkt_desc->dts*/) { // FIXME: > vs >=
+             if (stream->buffer_index < pkt_desc->size ||
                 stream->predecode_packet == stream->premux_packet) {
+                /* Disableed by Tang, Hongxing. It's normal case
                 av_log(ctx, AV_LOG_ERROR,
                        "buffer underflow st=%d bufi=%d size=%d\n",
                        i, stream->buffer_index, pkt_desc->size);
+                Disableed end by Tang, Hongxing */
                 break;
             }
             stream->buffer_index    -= pkt_desc->size;
-            stream->predecode_packet = pkt_desc->next;
+            stream->predecode_packet = pkt_desc->next; 
             av_freep(&pkt_desc);
         }
     }
@@ -1016,8 +1132,10 @@ retry:
                     scr / 90000.0, best_dts / 90000.0);
 
             if (scr >= best_dts + 1 && !ignore_constraints) {
+                /* Disabled by Tang, Hongxing. It's normal in case of the last packet
                 av_log(ctx, AV_LOG_ERROR,
                     "packet too large, ignoring buffer limits to mux it\n");
+                */
                 ignore_constraints = 1;
             }
             scr = FFMAX(best_dts + 1, scr);
@@ -1043,26 +1161,22 @@ retry:
 
     av_assert0(avail_space >= s->packet_size || ignore_constraints);
 
-    timestamp_packet = stream->premux_packet;
+		/* Modified by Tang, Hongxing */
+    timestamp_packet = stream->predecode_packet;
+    s->key_frame = timestamp_packet->key_frame; // Added for GB28181 by Tang, Hongxing
+    av_assert0(av_fifo_size(stream->fifo) >= timestamp_packet->unwritten_size);
     if (timestamp_packet->unwritten_size == timestamp_packet->size) {
         trailer_size = 0;
+        av_dlog(ctx, "dts:%f pts:%f scr:%f stream:%d\n",
+                timestamp_packet->pts / 90000.0,
+                timestamp_packet->dts / 90000.0,
+                scr / 90000.0, best_i);
     } else {
         trailer_size     = timestamp_packet->unwritten_size;
-        timestamp_packet = timestamp_packet->next;
     }
-
-    if (timestamp_packet) {
-        av_dlog(ctx, "dts:%f pts:%f scr:%f stream:%d\n",
-                timestamp_packet->dts / 90000.0,
-                timestamp_packet->pts / 90000.0,
-                scr / 90000.0, best_i);
-        es_size = flush_packet(ctx, best_i, timestamp_packet->pts,
-                               timestamp_packet->dts, scr, trailer_size);
-    } else {
-        av_assert0(av_fifo_size(stream->fifo) == trailer_size);
-        es_size = flush_packet(ctx, best_i, AV_NOPTS_VALUE, AV_NOPTS_VALUE, scr,
-                               trailer_size);
-    }
+    es_size = flush_packet(ctx, best_i, timestamp_packet->pts,
+                               timestamp_packet->dts, scr, trailer_size, timestamp_packet->unwritten_size);
+		/* Modified end by Tang, Hongxing */
 
     if (s->is_vcd) {
         /* Write one or more padding sectors, if necessary, to reach
@@ -1081,7 +1195,7 @@ retry:
     // FIXME: rounding and first few bytes of each packet
     s->last_scr          += s->packet_size * 90000LL / (s->mux_rate * 50LL);
 
-    while (stream->premux_packet &&
+    while (stream->premux_packet && 0 < es_size &&
            stream->premux_packet->unwritten_size <= es_size) {
         es_size              -= stream->premux_packet->unwritten_size;
         stream->premux_packet = stream->premux_packet->next;
@@ -1146,6 +1260,13 @@ static int mpeg_mux_write_packet(AVFormatContext *ctx, AVPacket *pkt)
     if (!stream->predecode_packet)
         stream->predecode_packet = pkt_desc;
     stream->next_packet = &pkt_desc->next;
+
+    pkt_desc->key_frame = is_iframe; // Added for GB28181 by Tang, Hongxing
+
+		/* Added for GB28181 by Tang, Hongxing for test
+    static long pkt_num = 0;
+    av_log(ctx, AV_LOG_ERROR, "AVPacket[%ld] size=%d, pts=%lld. pes_packet_number=%d\n", pkt_num++, pkt_desc->size, pkt_desc->pts, s->packet_number);
+		Added end by Tang, Hongxing for test */
 
     if (av_fifo_realloc2(stream->fifo, av_fifo_size(stream->fifo) + size) < 0)
         return -1;

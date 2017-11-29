@@ -59,6 +59,11 @@
 
 #define STREAM_TYPE_AUDIO_AC3       0x81
 
+/* Added for GB28181 by Tang, Hongxing */
+#define STREAM_TYPE_AUDIO_PCM_ALAW  0x90
+#define STREAM_TYPE_AUDIO_PCM_MULAW 0x91
+/* Added end by Tang, Hongxing */
+
 static const int lpcm_freq_tab[4] = { 48000, 96000, 44100, 32000 };
 
 /**
