@@ -680,6 +680,10 @@ static const StreamType ISO_types[] = {
     { 0x42, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_CAVS       },
     { 0xd1, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_DIRAC      },
     { 0xea, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VC1        },
+	// vvv wenfeng
+	{ 0x91, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW   },
+    { 0xf1, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW  },
+	// ^^^ wenfeng
     { 0 },
 };
 
@@ -694,6 +698,10 @@ static const StreamType HDMV_types[] = {
     { 0xa1, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_EAC3              }, /* E-AC3 Secondary Audio */
     { 0xa2, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_DTS               }, /* DTS Express Secondary Audio */
     { 0x90, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_HDMV_PGS_SUBTITLE },
+   // vvv wenfeng
+	{ 0xF1, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_MULAW         },
+	{ 0x91, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW   },
+	// ^^^ wenfeng
     { 0 },
 };
 
@@ -701,12 +709,20 @@ static const StreamType HDMV_types[] = {
 static const StreamType MISC_types[] = {
     { 0x81, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_AC3 },
     { 0x8a, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS },
+	// vvv wenfeng
+	{ 0x90, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW },     
+	{ 0xF1, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW },  
+	// ^^^ wenfeng
     { 0 },
 };
 
 static const StreamType REGD_types[] = {
     { MKTAG('d', 'r', 'a', 'c'), AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_DIRAC },
     { MKTAG('A', 'C', '-', '3'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_AC3   },
+	// vvv wenfeng
+    { MKTAG('A', 'L', 'A', 'W'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW},  
+    { MKTAG('U', 'L', 'A', 'W'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW}, 
+	// ^^^ wenfeng
     { MKTAG('B', 'S', 'S', 'D'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_S302M },
     { MKTAG('D', 'T', 'S', '1'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS   },
     { MKTAG('D', 'T', 'S', '2'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS   },
@@ -731,6 +747,10 @@ static const StreamType DESC_types[] = {
     { 0x7b, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_DTS          },
     { 0x56, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_DVB_TELETEXT },
     { 0x59, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_DVB_SUBTITLE }, /* subtitling descriptor */
+	// vvv wenfeng
+	 { 0x90, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_ALAW }, 
+	{ 0xf1, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_MULAW }, 
+     // ^^^ wenfeng
     { 0 },
 };
 
@@ -747,6 +767,15 @@ static void mpegts_find_stream_type(AVStream *st,
         if (stream_type == types->stream_type) {
             st->codec->codec_type = types->codec_type;
             st->codec->codec_id   = types->codec_id;
+			// vvv wenfeng
+			if (st->codec->codec_id == AV_CODEC_ID_PCM_MULAW || st->codec->codec_id == AV_CODEC_ID_PCM_ALAW)
+			{
+				st->codec->channels = 1; 
+				st->codec->channel_layout = AV_CH_LAYOUT_MONO;  
+				st->codec->sample_rate = 8000;             
+			} 
+			// ^^^ wenfeng
+
             st->request_probe     = 0;
             return;
         }

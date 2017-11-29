@@ -309,6 +309,14 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
         case AV_CODEC_ID_TRUEHD:
             stream_type = STREAM_TYPE_AUDIO_TRUEHD;
             break;
+		//vvv wenfeng
+		case AV_CODEC_ID_PCM_MULAW:
+			stream_type =  0xF1;             
+			break;
+		case AV_CODEC_ID_PCM_ALAW:
+             stream_type = 0x90;
+	         break;  
+		// ^^^ wenfeng
         default:
             stream_type = STREAM_TYPE_PRIVATE_DATA;
             break;
@@ -1045,6 +1053,10 @@ static void mpegts_write_pes(AVFormatContext *s, AVStream *st,
             } else if (st->codec->codec_type == AVMEDIA_TYPE_AUDIO &&
                        (st->codec->codec_id == AV_CODEC_ID_MP2 ||
                         st->codec->codec_id == AV_CODEC_ID_MP3 ||
+					// vvv wenfeng
+						st->codec->codec_id == AV_CODEC_ID_PCM_MULAW ||
+						st->codec->codec_id == AV_CODEC_ID_PCM_ALAW ||
+					// ^^^ wenfeng
                         st->codec->codec_id == AV_CODEC_ID_AAC)) {
                 *q++ = 0xc0;
             } else if (st->codec->codec_type == AVMEDIA_TYPE_AUDIO &&
